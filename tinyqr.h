@@ -181,7 +181,7 @@ namespace tinyqr {
     template<typename scalar_t, const size_t max_size = 100>
     [[maybe_unused]] eigendecomposition<scalar_t> qr_algorithm(
             const std::vector<scalar_t> &A,
-            const size_t max_iter = 500,
+            const size_t max_iter = 35,
             const scalar_t tol = 1e-8) {
         auto Ak = A;
         // A is square

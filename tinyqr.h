@@ -111,37 +111,39 @@ namespace {
             }
         }
     }
+
     // this is the implementation of QR decomposition - this does not get exposed, only the
-    // nice facades do
-template<typename scalar_t, const size_t max_size = 100> void
-qr_impl(std::vector<scalar_t> &Q,
-        std::vector<scalar_t> &R,
-        std::vector<scalar_t> &G,
-        const size_t n,
-        const scalar_t tol) {
-for (size_t j = 0; j < n; j++) {
-for (size_t i = n - 1; i > j; i--) {
-// using tuples and structured bindings should make this fairly ok performance wise
-const auto [c, s] = givens_rotation(R[(j * n) + (i - 1)], R[j * n + i]);
-// this replaces a block of size 2x2 - hopefully it is correct
-G[((i - 1) * n) + (i - 1)] = c;
-G[((i - 1) * n) + i] = s;
-G[(i * n) + (i - 1)] = -s;
-G[(i * n) + i] = c;
-tA_matmul_B_to_B<scalar_t, max_size>(G, R, n, n);
-A_matmul_B_to_A<scalar_t, max_size>(Q, G, n, n);
-// overwrite the previously replaced values
-G[((i - 1) * n) + (i - 1)] = 1.0;
-G[((i - 1) * n) + i] = 0.0;
-G[(i * n) + (i - 1)] = 0.0;
-G[(i * n) + i] = 1.0;
-}
-}
-// clean up R - particularly under the diagonal
-for (auto &val: R) {
-val = std::abs(val) < tol ? 0.0 : val;
-}
-}
+    // nice(r) facades do
+    template<typename scalar_t, const size_t max_size = 100>
+    void
+    qr_impl(std::vector<scalar_t> &Q,
+            std::vector<scalar_t> &R,
+            std::vector<scalar_t> &G,
+            const size_t n,
+            const scalar_t tol) {
+        for (size_t j = 0; j < n; j++) {
+            for (size_t i = n - 1; i > j; i--) {
+                // using tuples and structured bindings should make this fairly ok performance wise
+                const auto [c, s] = givens_rotation(R[(j * n) + (i - 1)], R[j * n + i]);
+                // this replaces a block of size 2x2 using the rotation
+                G[((i - 1) * n) + (i - 1)] = c;
+                G[((i - 1) * n) + i] = s;
+                G[(i * n) + (i - 1)] = -s;
+                G[(i * n) + i] = c;
+                tA_matmul_B_to_B<scalar_t, max_size>(G, R, n, n);
+                A_matmul_B_to_A<scalar_t, max_size>(Q, G, n, n);
+                // overwrite the 2x2 block of previously rotated values
+                G[((i - 1) * n) + (i - 1)] = 1.0;
+                G[((i - 1) * n) + i] = 0.0;
+                G[(i * n) + (i - 1)] = 0.0;
+                G[(i * n) + i] = 1.0;
+            }
+        }
+        // clean up R - particularly under the diagonal
+        for (auto &val: R) {
+            val = std::abs(val) < tol ? 0.0 : val;
+        }
+    }
 } // namespace
 namespace tinyqr {
     template<typename scalar_t>
@@ -150,10 +152,9 @@ namespace tinyqr {
         std::vector<scalar_t> R;
     };
 
-// returns Q and R
     template<typename scalar_t, const size_t max_size = 100>
     [[maybe_unused]] QR<scalar_t> qr_decomposition(const std::vector<scalar_t> &A,
-                     const scalar_t tol = 1e-8) {
+                                                   const scalar_t tol = 1e-8) {
         const size_t n = std::sqrt(A.size());
         // initialize Q and R
         std::vector<scalar_t> Q(n * n, 0.0);
@@ -162,7 +163,7 @@ namespace tinyqr {
             Q[i * n + i] = 1.0;
         }
         std::vector<scalar_t> R = A;
-// initialize G
+        // initialize G
         std::vector<scalar_t> G(n * n, 0.0);
         for (size_t i = 0; i < n; i++) {
             G[i * n + i] = 1.0;
@@ -170,11 +171,13 @@ namespace tinyqr {
         qr_impl<scalar_t, max_size>(Q, R, G, n, tol);
         return {Q, R};
     }
+
     template<typename scalar_t>
     struct eigendecomposition {
         std::vector<scalar_t> eigenvals;
         std::vector<scalar_t> eigenvecs;
     };
+
     template<typename scalar_t, const size_t max_size = 100>
     [[maybe_unused]] eigendecomposition<scalar_t> qr_algorithm(
             const std::vector<scalar_t> &A,
@@ -199,16 +202,16 @@ namespace tinyqr {
         }
         for (size_t i = 0; i < max_iter; i++) {
             // reset Q and R, G gets reset inside qr_impl
-            for(size_t j = 0; j < n; j++) {
-                for(size_t k = 0; k < n; k++) {
+            for (size_t j = 0; j < n; j++) {
+                for (size_t k = 0; k < n; k++) {
                     // probably a decent way to reset to a diagonal matrix
-                  Q[j*n + k] = static_cast<scalar_t>(k == j);
-                  // and this is really just a direct copy, but since we have this loop anyway
-                  R[j*n + k] = Ak[j*n + k];
+                    Q[j * n + k] = static_cast<scalar_t>(k == j);
+                    // and this is really just a direct copy, but since we have this loop anyway
+                    R[j * n + k] = Ak[j * n + k];
                 }
             }
             // call QR decomposition
-            qr_impl<scalar_t,max_size>(Q,R,G,n,tol);
+            qr_impl<scalar_t, max_size>(Q, R, G, n, tol);
             A_matmul_B_to_C<scalar_t, max_size>(R, Q, Ak, n);
             A_matmul_B_to_A<scalar_t, max_size>(QQ, Q, n, n);
         }

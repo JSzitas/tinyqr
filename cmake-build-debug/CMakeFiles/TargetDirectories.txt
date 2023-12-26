@@ -1,0 +1,3 @@
+/home/juraj/Desktop/tinyqr/cmake-build-debug/CMakeFiles/tinyqr.dir
+/home/juraj/Desktop/tinyqr/cmake-build-debug/CMakeFiles/edit_cache.dir
+/home/juraj/Desktop/tinyqr/cmake-build-debug/CMakeFiles/rebuild_cache.dir

@@ -199,7 +199,7 @@ struct eigendecomposition {
 
 template <typename scalar_t, const size_t max_size = 100>
 [[maybe_unused]] eigendecomposition<scalar_t> qr_algorithm(
-    const std::vector<scalar_t> &A, const size_t max_iter = 35,
+    const std::vector<scalar_t> &A, const size_t max_iter = 25,
     const scalar_t tol = 1e-8) {
   auto Ak = A;
   // A is square
@@ -224,8 +224,6 @@ template <typename scalar_t, const size_t max_size = 100>
       for (size_t k = 0; k < n; k++) {
         // probably a decent way to reset to a diagonal matrix
         Q[j * n + k] = static_cast<scalar_t>(k == j);
-        // and this is really just a direct copy, but since we have this loop
-        // anyway
         R[j * n + k] = Ak[j * n + k];
       }
     }

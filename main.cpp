@@ -49,7 +49,7 @@ int main() {
   const std::vector<double> A = {2.68, 8.86, 2.78, 0.09, 8.86, 50.93,
                                  3.78, 6.74, 2.78, 3.78, 8.95, 2.94,
                                  0.09, 6.74, 2.94, 45.46};
-  const auto res = tinyqr::qr_algorithm<double, 100>(A);
+  const auto res = tinyqr::qr_algorithm<double>(A);
   print_eigendecomposition_result(res);
   return 0;
 }

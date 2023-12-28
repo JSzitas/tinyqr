@@ -139,7 +139,7 @@ template <typename scalar_t>
   // initialize Q and R
   std::vector<scalar_t> Q(n * n, 0.0);
   for (size_t i = 0; i < n; i++) Q[i * n + i] = 1.0;
-  std::vector<scalar_t> R = Ak;
+  std::vector<scalar_t> R(n * n);  // = Ak;
   std::vector<scalar_t> temp(Q.size());
   for (size_t i = 0; i < max_iter; i++) {
     // reset Q and R, G gets reset inside qr_impl
@@ -177,5 +177,66 @@ template <typename scalar_t>
   Ak.resize(n);
   return {Ak, QQ};
 }
+template <typename scalar_t>
+class QRSolver {
+  const size_t n;
+  std::vector<scalar_t> Ak, QQ, Q, R, temp, eigval;
+
+ public:
+  explicit QRSolver<scalar_t>(const size_t n) : n(n) {
+    this->Ak = std::vector<scalar_t>(n * n);
+    this->QQ = std::vector<scalar_t>(n * n, 0.0);
+    for (size_t i = 0; i < n; i++) this->QQ[i * n + i] = 1.0;
+    // initialize Q and R
+    this->Q = std::vector<scalar_t>(n * n, 0.0);
+    for (size_t i = 0; i < n; i++) this->Q[i * n + i] = 1.0;
+    this->R = std::vector<scalar_t>(n * n);
+    this->temp = std::vector<scalar_t>(n * n);
+    this->eigval = std::vector<scalar_t>(n);
+  }
+  void solve(const std::vector<scalar_t> &A, const size_t max_iter = 25,
+             const scalar_t tol = 1e-8) {
+    this->Ak = A;
+    // in case we need to reset QQ
+    for (size_t i = 0; i < n; i++) {
+      for (size_t j = 0; j < n; j++) {
+        this->QQ[i * n + j] = static_cast<scalar_t>(i == j);
+      }
+    }
+    for (size_t i = 0; i < max_iter; i++) {
+      // reset Q and R, G gets reset inside qr_impl
+      for (size_t j = 0; j < n; j++) {
+        for (size_t k = 0; k < n; k++) {
+          // probably a decent way to reset to a diagonal matrix
+          Q[j * n + k] = static_cast<scalar_t>(k == j);
+          R[j * n + k] = Ak[j * n + k];
+        }
+      }
+      // call QR decomposition
+      tinyqr::internal::qr_impl<scalar_t>(Q, R, n, tol);
+      tinyqr::internal::A_matmul_B_to_C<scalar_t>(R, Q, Ak, n);
+      // overwrite QQ in place
+      size_t p = 0;
+      for (size_t j = 0; j < n; j++) {
+        for (size_t k = 0; k < n; k++) {
+          temp[p] = 0;
+          for (size_t l = 0; l < n; l++) {
+            temp[p] += QQ[l * n + k] * Q[j * n + l];
+          }
+          p++;
+        }
+      }
+      // write to A colwise - i.e. directly
+      for (size_t k = 0; k < QQ.size(); k++) {
+        QQ[k] = temp[k];
+      }
+    }
+    for (size_t i = 0; i < n; i++) {
+      eigval[i] = Ak[i * n + i];
+    }
+  }
+  const std::vector<scalar_t> &eigenvalues() const { return eigval; }
+  const std::vector<scalar_t> &eigenvectors() const { return this->QQ; }
+};
 }  // namespace tinyqr
 #endif  // TINYQR_H_"

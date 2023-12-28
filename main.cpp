@@ -27,16 +27,32 @@
 #include "./tinyqr.h"
 
 template <typename T>
-void print_eigendecomposition_result(T &result) {
+void print_eigendecomposition_result(T &result, const size_t n = 4) {
   std::cout << "Eigenvals: \n";
   for (auto &eigval : result.eigenvals) {
     std::cout << eigval << ",";
   }
   std::cout << std::endl;
   std::cout << "Eigenvecs: \n";
-  for (size_t i = 0; i < 4; i++) {
-    for (size_t j = 0; j < 4; j++) {
+  for (size_t i = 0; i < n; i++) {
+    for (size_t j = 0; j < n; j++) {
       std::cout << result.eigenvecs[j * 4 + i] << ',';
+    }
+    std::cout << '\n';
+  }
+  std::cout << std::endl;
+}
+void print_vec(const std::vector<double> &x) {
+  for (const auto &val : x) {
+    std::cout << val << ",";
+  }
+  std::cout << "\n";
+}
+void print_square_mat(const std::vector<double> &x, const size_t n = 4) {
+  std::cout << "\n";
+  for (size_t i = 0; i < n; i++) {
+    for (size_t j = 0; j < n; j++) {
+      std::cout << x[j * n + i] << ',';
     }
     std::cout << '\n';
   }
@@ -51,5 +67,11 @@ int main() {
                                  0.09, 6.74, 2.94, 45.46};
   const auto res = tinyqr::qr_algorithm<double>(A);
   print_eigendecomposition_result(res);
+
+  auto solver = tinyqr::QRSolver<double>(4);
+  // run solver
+  solver.solve(A);
+  print_vec(solver.eigenvalues());
+  print_square_mat(solver.eigenvectors());
   return 0;
 }

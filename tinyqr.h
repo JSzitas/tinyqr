@@ -64,7 +64,7 @@ inline void A_matmul_B_to_C(std::vector<scalar_t> &A, std::vector<scalar_t> &B,
 }
 // this is the implementation of QR decomposition - this does not get exposed,
 // only the nice(r) facades do
-template <typename scalar_t>
+template <typename scalar_t, const bool cleanup = false>
 void qr_impl(std::vector<scalar_t> &Q, std::vector<scalar_t> &R, const size_t n,
              const scalar_t tol) {
   for (size_t j = 0; j < n; j++) {
@@ -95,9 +95,11 @@ void qr_impl(std::vector<scalar_t> &Q, std::vector<scalar_t> &R, const size_t n,
       }
     }
   }
-  // clean up R - particularly under the diagonal
-  for (auto &val : R) {
-    val = std::abs(val) < tol ? 0.0 : val;
+  // clean up R - particularly under the diagonal - only useful if you are interested in the actual decomposition
+  if constexpr(cleanup) {
+    for (auto &val : R) {
+      val = std::abs(val) < tol ? 0.0 : val;
+    }
   }
 }
 }  // namespace tinyqr::internal
@@ -117,7 +119,7 @@ template <typename scalar_t>
   // Q is an identity matrix
   for (size_t i = 0; i < n; i++) Q[i * n + i] = 1.0;
   std::vector<scalar_t> R = A;
-  tinyqr::internal::qr_impl<scalar_t>(Q, R, n, tol);
+  tinyqr::internal::qr_impl<scalar_t, true>(Q, R, n, tol);
   return {Q, R};
 }
 
@@ -151,7 +153,7 @@ template <typename scalar_t>
       }
     }
     // call QR decomposition
-    tinyqr::internal::qr_impl<scalar_t>(Q, R, n, tol);
+    tinyqr::internal::qr_impl<scalar_t, false>(Q, R, n, tol);
     tinyqr::internal::A_matmul_B_to_C<scalar_t>(R, Q, Ak, n);
     // overwrite QQ in place
     size_t p = 0;

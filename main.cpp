@@ -59,19 +59,57 @@ void print_square_mat(const std::vector<double> &x, const size_t n = 4) {
   std::cout << std::endl;
 }
 
+void print_rec_mat(const std::vector<double> &x, const size_t n = 4,
+                   const size_t p = 4) {
+  std::cout << "\n";
+  for (size_t i = 0; i < n; i++) {
+    for (size_t j = 0; j < p; j++) {
+      std::cout << x[j * n + i] << ',';
+    }
+    std::cout << '\n';
+  }
+  std::cout << std::endl;
+}
+
+void print_QR_decomposition(const tinyqr::QR<double> &qr, const size_t n,
+                            const size_t p) {
+  std::cout << "Q: " << std::endl;
+  print_rec_mat(qr.Q, n, p);
+  std::cout << "\n";
+  std::cout << "R: " << std::endl;
+  print_rec_mat(qr.R, p, p);
+  std::cout << "\n";
+}
+
 int main() {
   // only works for symmetric matrices - which is my application (covariance
   // matrices)
   const std::vector<double> A = {2.68, 8.86, 2.78, 0.09, 8.86, 50.93,
                                  3.78, 6.74, 2.78, 3.78, 8.95, 2.94,
                                  0.09, 6.74, 2.94, 45.46};
-  const auto res = tinyqr::qr_algorithm<double>(A);
+  // only QR decomposition, as opposed to QR algorithm
+  const auto QR_res = tinyqr::qr_decomposition(A, 4, 4);
+  print_QR_decomposition(QR_res, 4, 4);
+  const auto QR_res2 = tinyqr::qr_decomposition(A, 8, 2);
+  print_QR_decomposition(QR_res2, 8, 2);
+  // solving a linear system using QR
+  std::vector<double> y = {-0.18, 0.56,  -9.7,  -3.21,
+                           3.78,  16.94, -1.37, -51.32};
+  // coefficients for this should be 0.5 and -1.3, R's lm() gives 0.4938,
+  // -1.1994
+  auto coef = tinyqr::lm(A, y);
+  std::cout << "Linear system solution coefficients: ";
+  for (auto coef_ : coef) std::cout << coef_ << ",";
+  std::cout << "\n(against expectation of 0.4938, -1.1994)\n\n";
+  // QR Algorithm
+  const auto res = tinyqr::qr_algorithm<double>(A, 2);
   print_eigendecomposition_result(res);
-
   auto solver = tinyqr::QRSolver<double>(4);
   // run solver
-  solver.solve(A);
+  solver.solve(A, 2);
+  std::cout << "Eigenvals: \n";
   print_vec(solver.eigenvalues());
+  std::cout << "Eigenvecs:";
   print_square_mat(solver.eigenvectors());
   return 0;
 }

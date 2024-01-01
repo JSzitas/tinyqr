@@ -184,13 +184,12 @@ template <typename scalar_t>
   tinyqr::internal::qr_impl<scalar_t, true>(Q, R, n, p, tol);
   // keep in mind that only an n*p block of Q is meaningful, as well as only a
   // p*p block of R
-  size_t k = 0;
   for (size_t i = 1; i < n; i++) {
     for (size_t j = 0; j < p; j++) {
       std::swap(Q[j * n + i], Q[i * n + j]);
     }
   }
-  k = 0;
+  size_t k = 0;
   for (size_t i = 0; i < p; i++) {
     for (size_t j = 0; j < p; j++) {
       R[k++] = R[i * n + j];

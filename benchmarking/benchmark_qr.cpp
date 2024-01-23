@@ -22,8 +22,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#include <iostream>  // NOLINT
+
 #include "../tinyqr.h"
-#include "./benchmark_utils.h"
+#include "./utils.h"
 
 int main() {
   const std::vector<double> A = {2.68, 8.86, 2.78, 0.09, 8.86, 50.93,
@@ -31,11 +33,16 @@ int main() {
                                  0.09, 6.74, 2.94, 45.46};
 
   using scalar_t = double;
-  const auto A2 = read_vec<scalar_t>("A2.txt");
-  const auto& fun = [&]() {
-    auto qr_res = tinyqr::qr_decomposition(A2, 100, 8);
-    return;
-  };
-  benchmark<scalar_t>(fun);
+  auto benchmark = Benchmarker<scalar_t>(100);
+  for (size_t i = 2; i < 128; i *= 2) {
+    for (size_t j = i; j < 2048; j *= 2) {
+      auto X = make_random_matrix<scalar_t>(j, i);
+      std::function<void()> v1 = [&]() { tinyqr::qr_decomposition(X, j, i); };
+      std::function<void()> v2 = [&]() { tinyqr::qr_decomposition2(X, j, i); };
+      std::cout << "n: " << j << " | p: " << i << std::endl;
+      benchmark(v1, v2);
+    }
+  }
+  benchmark.report();
   return 0;
 }

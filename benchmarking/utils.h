@@ -31,6 +31,7 @@
 #include <iostream>
 #include <iterator>
 #include <queue>
+#include <random>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -115,6 +116,8 @@ struct StreamingMedian {
   }
 };
 
+#pragma clang diagnostic push
+#pragma ide diagnostic ignored "UnusedParameter"
 template <typename scalar_t, typename F>
 void benchmark(F& fun, const size_t max_iterations = 1000) {
   using clocktype = decltype(Stopwatch()());
@@ -133,6 +136,84 @@ void benchmark(F& fun, const size_t max_iterations = 1000) {
   std::cout << "Average time: " << timing / max_iterations
             << " \u03BCs | Median: " << median.value()
             << " \u03BCs | Total time: " << timing << " \u03BCs" << std::endl;
+}
+
+template <typename scalar_t>
+struct Benchmarker {
+  using clocktype = decltype(Stopwatch()());
+  const size_t max_iter;
+  StreamingMedian<scalar_t> median;
+  scalar_t mean = 0.0, total = 0.0, min_ = 1.0, max_ = 1.0;
+  Benchmarker<scalar_t>(const size_t max_iterations = 1000)
+      : max_iter(max_iterations) {}
+  template <typename F, typename F_>
+  void operator()(F& f, F_& f2) {
+    const auto& fun_ = [&]() {
+      Stopwatch sw;
+      f();
+      return sw();
+    };
+    const auto& fun_2 = [&]() {
+      Stopwatch sw;
+      f2();
+      return sw();
+    };
+    scalar_t timing = 0.0;
+    scalar_t mean_ = 0.0;
+    for (size_t i = 0; i < max_iter; i++) {
+      const scalar_t run = fun_() / fun_2();
+      median.push_back(run);
+      mean_ += run;
+      total += run;
+      min_ = run < min_ ? run : min_;
+      max_ = run > max_ ? run : max_;
+    }
+    mean_ /= max_iter;
+    mean = (mean + mean_) / 2;
+  }
+  void report() {
+    std::cout << "Average speedup: " << mean
+              << " | Median speedup: " << median.value()
+              << " | Total time: " << total << " | worst speedup: " << min_
+              << " | best speedup: " << max_ << std::endl;
+  }
+};
+#pragma clang diagnostic pop
+
+template <const size_t max_iterations = 1000, typename... Ts,
+          typename scalar_t = double, const bool check_identity = true>
+void benchmark_versions(Ts&&... versions) {
+  const auto funs = {versions...};
+  // if we should try to check the identity of outputs, first figure out if we
+  // have non-void returns for all functions
+  // bool check = check_identity;
+  if constexpr (check_identity) {
+    for (const auto& fun : funs) {
+      if (std::is_same<typename decltype(std::function{fun})::result_type,
+                       void>::value) {
+        break;
+      }
+    }
+  }
+  size_t version = 1;
+  // finally run benchmarks
+  for (const auto& fun : funs) {
+    std::cout << "Version: " << version++ << " | ";
+    benchmark<scalar_t>(fun, max_iterations);
+  }
+}
+
+template <typename scalar_t>
+std::vector<scalar_t> make_random_matrix(const size_t n, const size_t p,
+                                         const scalar_t mean = 0.0,
+                                         const scalar_t std_dev = 1.0) {
+  std::random_device rd{};
+  std::mt19937 gen{rd()};
+  std::normal_distribution d{mean, std_dev};
+
+  std::vector<scalar_t> result(n * p);
+  for (auto& val : result) val = d(gen);
+  return result;
 }
 
 #endif  // BENCHMARKING_UTILS_H_

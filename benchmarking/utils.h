@@ -120,7 +120,6 @@ struct StreamingMedian {
 #pragma ide diagnostic ignored "UnusedParameter"
 template <typename scalar_t, typename F>
 void benchmark(F& fun, const size_t max_iterations = 1000) {
-  using clocktype = decltype(Stopwatch()());
   const auto& fun_ = [&]() {
     Stopwatch sw;
     fun();
@@ -140,10 +139,10 @@ void benchmark(F& fun, const size_t max_iterations = 1000) {
 
 template <typename scalar_t>
 struct Benchmarker {
-  using clocktype = decltype(Stopwatch()());
   const size_t max_iter;
   StreamingMedian<scalar_t> median;
-  scalar_t mean = 0.0, total = 0.0, min_ = 1.0, max_ = 1.0;
+  scalar_t mean = 0.0, total = 0.0, min_ = 1.0, max_ = 1.0, mean1 = 0.0,
+           mean2 = 0.0;
   Benchmarker<scalar_t>(const size_t max_iterations = 1000)
       : max_iter(max_iterations) {}
   template <typename F, typename F_>
@@ -161,7 +160,11 @@ struct Benchmarker {
     scalar_t timing = 0.0;
     scalar_t mean_ = 0.0;
     for (size_t i = 0; i < max_iter; i++) {
-      const scalar_t run = fun_() / fun_2();
+      const scalar_t f_res_1 = fun_();
+      const scalar_t f_res_2 = fun_2();
+      mean1 += f_res_1;
+      mean2 += f_res_2;
+      const scalar_t run = f_res_1 / f_res_2;
       median.push_back(run);
       mean_ += run;
       total += run;
@@ -169,13 +172,16 @@ struct Benchmarker {
       max_ = run > max_ ? run : max_;
     }
     mean_ /= max_iter;
+    mean1 /= max_iter;
+    mean2 /= max_iter;
     mean = (mean + mean_) / 2;
   }
   void report() {
     std::cout << "Average speedup: " << mean
               << " | Median speedup: " << median.value()
               << " | Total time: " << total << " | worst speedup: " << min_
-              << " | best speedup: " << max_ << std::endl;
+              << " | best speedup: " << max_ << "\nAverage speed v1: " << mean1
+              << " | Average speed v2: " << mean2 << std::endl;
   }
 };
 #pragma clang diagnostic pop

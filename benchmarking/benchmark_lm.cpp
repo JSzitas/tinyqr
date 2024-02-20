@@ -25,20 +25,10 @@
 #include <iostream>
 
 #include "../tinyqr.h"
-#include "./benchmark_utils.h"
+#include "./utils.h"
 
 int main() {
-  /*
-  const std::vector<double> A = {2.68, 8.86, 2.78, 0.09, 8.86, 50.93,
-                                 3.78, 6.74, 2.78, 3.78, 8.95, 2.94,
-                                 0.09, 6.74, 2.94, 45.46};
-  // solving a linear system using QR
-  std::vector<double> y = {-0.18, 0.56,  -9.7,  -3.21,
-                           3.78,  16.94, -1.37, -51.32};
-                           */
-  using scalar_t = double;
-  // coefficients for this should be 0.5 and -1.3, R's lm() gives 0.4938,
-  // -1.1994
+  using scalar_t = float;
   const auto A = read_vec<scalar_t>("A2.txt");
   const auto y = read_vec<scalar_t>("y2.txt");
   auto coef = tinyqr::lm(A, y);

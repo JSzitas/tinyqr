@@ -36,14 +36,14 @@
 // vectorised math macros
 #if !defined(NO_MANUAL_VECTORIZATION) && defined(__GNUC__) && \
     (__GNUC__ > 6) && defined(__AVX512F__)
-#define DOT_USE_AVX512
+#define USE_AVX512
 #endif
 #if !defined(NO_MANUAL_VECTORIZATION) && defined(__AVX__) && \
     defined(__SSE__) && defined(__SSE2__) && defined(__SSE3__)
-#define DOT_USE_AVX
+#define USE_AVX
 #endif
 
-#if defined(DOT_USE_AVX) || defined(DOT_USE_AVX512)
+#if defined(USE_AVX) || defined(USE_AVX512)
 #if defined(_MSC_VER)
 #include <intrin.h>
 #elif defined(__GNUC__)
@@ -52,46 +52,43 @@
 #endif
 
 namespace tinyqr::internal {
+// since we are using 1/sqrt(x) here - default
 template <typename scalar_t>
-std::tuple<scalar_t, scalar_t> givens_rotation(scalar_t a, scalar_t b) {
-  /*if (std::abs(b) <= std::numeric_limits<scalar_t>::min()) {
-    return std::make_tuple(1.0, 0.0);
-  } else {
-   */
+inline __attribute__((always_inline)) scalar_t inv_sqrt(scalar_t x) {
+  return 1.0 / std::sqrt(x);
+}
+// fast inverse square root - might buy us a tiny bit, and I have been looking
+// for forever to use this :)
+/*
+template <>
+[[maybe_unused]] inline __attribute__((always_inline)) float inv_sqrt(float x) {
+  long i = *reinterpret_cast<long *>(&x);       // evil floating point bit level
+hacking // NOLINT [runtime/int] i = 0x5f3759df - (i >> 1);  // what the fuck?
+  return *reinterpret_cast<float *>(&i);
+}*/
+template <typename scalar_t>
+inline __attribute__((always_inline)) std::tuple<scalar_t, scalar_t>
+givens_rotation(const scalar_t a, const scalar_t b) {
   if (std::abs(b) > std::abs(a)) {
     const scalar_t r = a / b;
-    const scalar_t s = 1.0 / sqrt(1.0 + std::pow(r, 2));
-    return std::make_tuple(s * r, s);
-  } else {
-    const scalar_t r = b / a;
-    const scalar_t c = 1.0 / sqrt(1.0 + std::pow(r, 2));
-    return std::make_tuple(c, c * r);
+    const auto s = static_cast<scalar_t>(inv_sqrt(std::pow(r, 2) + 1.0));
+    return {s * r, s};
   }
-  //}
+  const scalar_t r = b / a;
+  const auto c = static_cast<scalar_t>(inv_sqrt(std::pow(r, 2) + 1.0));
+  return {c, c * r};
 }
+
 template <typename scalar_t>
-[[maybe_unused]] inline void A_matmul_B_to_C(std::vector<scalar_t> &A,
-                                             std::vector<scalar_t> &B,
-                                             std::vector<scalar_t> &C,
-                                             const size_t ncol) {
+[[maybe_unused]] inline __attribute__((always_inline)) void tA_matmul_B_to_C(
+    std::vector<scalar_t> &__restrict__ A,
+    std::vector<scalar_t> &__restrict__ B,
+    std::vector<scalar_t> &__restrict__ C, const size_t ncol) {
   for (size_t k = 0; k < ncol; k++) {
     for (size_t l = 0; l < ncol; l++) {
       scalar_t accumulator = 0.0;
       for (size_t m = 0; m < ncol; m++) {
-        accumulator += A[m * ncol + k] * B[l * ncol + m];
-      }
-      C[l * ncol + k] = accumulator;
-    }
-  }
-}
-template <typename scalar_t>
-inline void A_matmul_tB_to_C(std::vector<scalar_t> &A, std::vector<scalar_t> &B,
-                             std::vector<scalar_t> &C, const size_t ncol) {
-  for (size_t k = 0; k < ncol; k++) {
-    for (size_t l = 0; l < ncol; l++) {
-      scalar_t accumulator = 0.0;
-      for (size_t m = 0; m < ncol; m++) {
-        accumulator += A[m * ncol + k] * B[m * ncol + l];
+        accumulator += A[k * ncol + m] * B[l * ncol + m];
       }
       C[l * ncol + k] = accumulator;
     }
@@ -99,30 +96,124 @@ inline void A_matmul_tB_to_C(std::vector<scalar_t> &A, std::vector<scalar_t> &B,
 }
 // transpose a square matrix in place
 template <typename scalar_t>
-void transpose_square(std::vector<scalar_t> &X, const size_t p) {
+inline __attribute__((always_inline)) void transpose_square(
+    std::vector<scalar_t> &X, const size_t p) {
   for (size_t i = 0; i < p; i++) {
     for (size_t j = i + 1; j < p; j++) {
       std::swap(X[(j * p) + i], X[(i * p) + j]);
     }
   }
 }
+// TODO(JSzitas): All of the following code supports SIMD
+// and this impl should make it a lot easier
 template <typename scalar_t>
-std::vector<scalar_t> make_identity(const size_t n) {
-  std::vector<scalar_t> result(n * n, 0.0);
-  for (size_t i = 0; i < n; i++) result[i * n + i] = 1.0;
+inline __attribute__((always_inline)) void rotate_matrix(
+    scalar_t *__restrict__ lower, scalar_t *__restrict__ upper,
+    const scalar_t c, const scalar_t s, size_t p) {
+  for (; p > 0; --p) {
+    const scalar_t temp_1 = *lower;
+    const scalar_t temp_2 = *upper;
+    *lower = c * temp_1 + s * temp_2;
+    *upper = -s * temp_1 + c * temp_2;
+    ++lower;
+    ++upper;
+  }
+}
+
+#ifdef USE_AVX
+template <>
+inline __attribute__((always_inline)) void rotate_matrix(
+    float *__restrict__ lower, float *__restrict__ upper, const float c,
+    const float s, size_t p) {
+  if (p > 7) {
+    const __m256 c_ = _mm256_set1_ps(c);
+    const __m256 s_ = _mm256_set1_ps(s);
+    __m256 res = _mm256_setzero_ps();
+    for (; p > 7; p -= 8) {
+      // set current register values
+      const auto lower_ = _mm256_loadu_ps(lower);
+      const auto upper_ = _mm256_loadu_ps(upper);
+      // updates on lower
+      res = _mm256_add_ps(_mm256_mul_ps(c_, lower_), _mm256_mul_ps(s_, upper_));
+      // store in lower
+      _mm256_storeu_ps(lower, res);
+      // updates on upper
+      res = _mm256_sub_ps(_mm256_mul_ps(c_, upper_), _mm256_mul_ps(s_, lower_));
+      // store in upper
+      _mm256_storeu_ps(upper, res);
+      lower += 8;
+      upper += 8;
+    }
+  }
+  for (; p > 0; --p) {
+    const float temp_1 = *lower;
+    const float temp_2 = *upper;
+    *lower = c * temp_1 + s * temp_2;
+    *upper = -s * temp_1 + c * temp_2;
+    ++lower;
+    ++upper;
+  }
+}
+#endif
+#ifdef USE_AVX_512
+template <>
+inline __attribute__((always_inline)) void rotate_matrix(
+    float *__restrict__ lower, float *__restrict__ upper, const float c,
+    const float s, size_t p) {
+  if (p > 15) {
+    const __m512 c_ = _mm512_set1_ps(c);
+    const __m512 s_ = _mm512_set1_ps(s);
+    __m256 res = _mm512_setzero_ps();
+    for (; p > 15; p -= 16) {
+      // set current register values
+      const auto lower_ = _mm512_loadu_ps(lower);
+      const auto upper_ = _mm512_loadu_ps(upper);
+      // updates on lower
+      res = _mm512_add_ps(_mm512_mul_ps(c_, lower_), _mm512_mul_ps(s_, upper_));
+      // store in lower
+      _mm512_storeu_ps(lower, res);
+      // updates on upper
+      res = _mm512_sub_ps(_mm512_mul_ps(c_, upper_), _mm512_mul_ps(s_, lower_));
+      // store in upper
+      _mm512_storeu_ps(upper, res);
+      lower += 16;
+      upper += 16;
+    }
+  }
+  for (; p > 0; --p) {
+    const float temp_1 = *lower;
+    const float temp_2 = *upper;
+    *lower = c * temp_1 + s * temp_2;
+    *upper = -s * temp_1 + c * temp_2;
+    ++lower;
+    ++upper;
+  }
+}
+#endif
+
+template <typename scalar_t>
+inline __attribute__((always_inline)) std::vector<scalar_t> make_identity(
+    const size_t n) {
+  std::vector<scalar_t> result(n * n, static_cast<scalar_t>(0.0));
+  for (size_t i = 0; i < n; i++) result[i * n + i] = static_cast<scalar_t>(1.0);
   return result;
 }
-template <typename scalar_t>
-[[maybe_unused]] void validate_qr(const std::vector<scalar_t> &X,
-                                  const std::vector<scalar_t> &Q,
-                                  const std::vector<scalar_t> &R,
+template <typename scalar_t, const bool report_success = true,
+          const size_t tune = 1000>
+[[maybe_unused]] void validate_qr(const std::vector<scalar_t> &__restrict__ X,
+                                  const std::vector<scalar_t> &__restrict__ Q,
+                                  const std::vector<scalar_t> &__restrict__ R,
                                   const size_t n, const size_t p) {
   // constant factor here added since epsilon is too small otherwise
-  constexpr scalar_t eps = std::numeric_limits<scalar_t>::epsilon() * 1e4;
+  constexpr auto eps =
+      std::numeric_limits<scalar_t>::epsilon() * static_cast<scalar_t>(tune);
+  // this trick is done since some third party limited precision floats
+  // do not provide an impl of the constexpr numeric limits epsilon function
+  // const auto eps = static_cast<scalar_t>(eps_);
   // Matrix multiplication QR
   for (size_t i = 0; i < n; ++i) {
     for (size_t j = 0; j < p; ++j) {
-      scalar_t tmp = 0;
+      auto tmp = scalar_t(0.0);
       for (size_t k = 0; k < p; ++k) {
         tmp += Q[k * n + i] * R[j * p + k];
       }
@@ -137,15 +228,14 @@ template <typename scalar_t>
       }
     }
   }
-  std::cout << "Validation of QR successful for size " << n << ", " << p
-            << std::endl;
+  if constexpr (report_success) {
+    std::cout << "Validation of QR successful for size " << n << ", " << p
+              << std::endl;
+  }
 }
-
-// this is the implementation of QR decomposition - this does not get exposed,
-// only the nice(r) facades do - NOTE that the output of this is technically
-// Q transposed, not Q!!!
 template <typename scalar_t, const bool cleanup = false>
-void qr_impl(std::vector<scalar_t> &Q, std::vector<scalar_t> &R, const size_t n,
+void qr_impl(std::vector<scalar_t> &__restrict__ Q,
+             std::vector<scalar_t> &__restrict__ R, const size_t n,
              const size_t p, const scalar_t tol) {
   // the key to optimizing this is probably to take R as R transposed - most
   // likely a lot of work is done just in the k loops, which is probably a good
@@ -156,80 +246,14 @@ void qr_impl(std::vector<scalar_t> &Q, std::vector<scalar_t> &R, const size_t n,
       // performance wise
       // check if R[j * n + i] - is not zero; if it is we can skip this
       // iteration
-      if (std::abs(R[j * n + i]) <= std::numeric_limits<scalar_t>::min())
-        continue;
-      const auto [c, s] = givens_rotation(R[(j * n) + (i - 1)], R[j * n + i]);
-      // you can make the matrix multiplication implicit, as the givens rotation
-      // only impacts a moving 2x2 block
-      for (size_t k = 0; k < p; ++k) {
-        // first do G'R - keep in mind this is transposed
-        const size_t upper = k * n + (i - 1);
-        const size_t lower = k * n + i;
-        const scalar_t temp_1 = R[upper];
-        const scalar_t temp_2 = R[lower];
-        // carry out the multiplies on required elements
-        R[upper] = c * temp_1 + s * temp_2;
-        R[lower] = -s * temp_1 + c * temp_2;
-      }
-      for (size_t k = 0; k < n; k++) {
-        // QG - note that this is not transposed
-        const size_t upper = k * n + i;
-        const size_t lower = k * n + i - 1;
-        const scalar_t temp_1 = Q[upper];
-        const scalar_t temp_2 = Q[lower];
-        // again, NOT transposed, so s and -s are flipped
-        Q[upper] = c * temp_1 - s * temp_2;
-        Q[lower] = s * temp_1 + c * temp_2;
-      }
-    }
-  }
-  // clean up R - particularly under the diagonal - only useful if you are
-  // interested in the actual decomposition
-  if constexpr (cleanup) {
-    for (auto &val : R) {
-      val = std::abs(val) < tol ? 0.0 : val;
-    }
-  }
-}
-template <typename scalar_t, const bool cleanup = false>
-void qr_impl2(std::vector<scalar_t> &Q, std::vector<scalar_t> &R,
-              const size_t n, const size_t p, const scalar_t tol) {
-  // the key to optimizing this is probably to take R as R transposed - most
-  // likely a lot of work is done just in the k loops, which is probably a good
-  // place to optimize
-  for (size_t j = 0; j < p; j++) {
-    for (size_t i = n - 1; i > j; --i) {
-      // using tuples and structured bindings should make this fairly ok
-      // performance wise
-      // check if R[j * n + i] - is not zero; if it is we can skip this
-      // iteration
-      if (std::abs(R[i * p + j]) <= std::numeric_limits<scalar_t>::min())
-        continue;
+      // if (std::abs(R[i * p + j]) <= std::numeric_limits<scalar_t>::min())
+      // continue;
       const auto [c, s] = givens_rotation(R[(i - 1) * p + j], R[i * p + j]);
       // you can make the matrix multiplication implicit, as the givens rotation
       // only impacts a moving 2x2 block
       // R is transposed
-      // TODO(JSzitas): All of the following code supports SIMD
-      for (size_t k = 0; k < p; ++k) {
-        // first do G'R - keep in mind this is transposed
-        const size_t upper = i * p + k;
-        const size_t lower = (i - 1) * p + k;
-        const scalar_t temp_1 = R[lower];
-        const scalar_t temp_2 = R[upper];
-        // carry out the multiplies on required elements
-        R[lower] = c * temp_1 + s * temp_2;
-        R[upper] = -s * temp_1 + c * temp_2;
-      }
-      for (size_t k = 0; k < n; k++) {
-        // QG - note that this is transposed
-        const size_t upper = i * n + k;
-        const size_t lower = (i - 1) * n + k;
-        const scalar_t temp_1 = Q[upper];
-        const scalar_t temp_2 = Q[lower];
-        // again, compared to the R loop, transposed, so s and -s are flipped
-        Q[upper] = c * temp_1 - s * temp_2;
-        Q[lower] = s * temp_1 + c * temp_2;
-      }
+      rotate_matrix(R.data() + (i - 1) * p, R.data() + i * p, c, s, p);
+      rotate_matrix(Q.data() + (i - 1) * n, Q.data() + i * n, c, s, n);
     }
   }
   // clean up R - particularly under the diagonal - only useful if you are
@@ -239,113 +263,6 @@ void qr_impl2(std::vector<scalar_t> &Q, std::vector<scalar_t> &R,
       val = std::abs(val) < tol ? 0.0 : val;
     }
   }
-}
-
-#ifdef DOT_USE_AVX
-// Horizontal single sum of 256bit vector.
-inline float hsum256_ps_avx(__m256 v) {
-  const __m128 x128 =
-      _mm_add_ps(_mm256_extractf128_ps(v, 1), _mm256_castps256_ps128(v));
-  const __m128 x64 = _mm_add_ps(x128, _mm_movehl_ps(x128, x128));
-  const __m128 x32 = _mm_add_ss(x64, _mm_shuffle_ps(x64, x64, 0x55));
-  return _mm_cvtss_f32(x32);
-}
-// refactor the use of cleanup away
-template <float, const bool cleanup = false>
-void qr_impl2(std::vector<float> &Q, std::vector<float> &R, const size_t n,
-              const size_t p, const scalar_t tol) {
-  // the key to optimizing this is probably to take R as R transposed - most
-  // likely a lot of work is done just in the k loops, which is probably a good
-  // place to optimize
-  for (size_t j = 0; j < p; j++) {
-    for (size_t i = n - 1; i > j; --i) {
-      // using tuples and structured bindings should make this fairly ok
-      // performance wise
-      // check if R[j * n + i] - is not zero; if it is we can skip this
-      // iteration
-      if (std::abs(R[i * p + j]) <= std::numeric_limits<scalar_t>::min())
-        continue;
-      const auto [c, s] = givens_rotation(R[(i - 1) * p + j], R[i * p + j]);
-      // you can make the matrix multiplication implicit, as the givens rotation
-      // only impacts a moving 2x2 block
-      // R is transposed
-      // TODO(JSzitas): All of the following code supports SIMD
-      for (size_t k = 0; k < p; ++k) {
-        // first do G'R - keep in mind this is transposed
-        const size_t upper = i * p + k;
-        const size_t lower = (i - 1) * p + k;
-        const scalar_t temp_1 = R[lower];
-        const scalar_t temp_2 = R[upper];
-        // carry out the multiplies on required elements
-        R[lower] = c * temp_1 + s * temp_2;
-        R[upper] = -s * temp_1 + c * temp_2;
-      }
-      for (size_t k = 0; k < n; k++) {
-        // QG - note that this is transposed
-        const size_t upper = i * n + k;
-        const size_t lower = (i - 1) * n + k;
-        const scalar_t temp_1 = Q[upper];
-        const scalar_t temp_2 = Q[lower];
-        // again, compared to the R loop, transposed, so s and -s are flipped
-        Q[upper] = c * temp_1 - s * temp_2;
-        Q[lower] = s * temp_1 + c * temp_2;
-      }
-    }
-  }
-  // clean up R - particularly under the diagonal - only useful if you are
-  // interested in the actual decomposition
-  if constexpr (cleanup) {
-    for (auto &val : R) {
-      val = std::abs(val) < tol ? 0.0 : val;
-    }
-  }
-}
-
-#endif
-
-// this computes the Gram matrix (here dubbed 'grammian' akin to 'jacobian' or
-// 'hessian') which is quite similar to a covariance matrix
-template <typename scalar_t>
-[[maybe_unused]] std::vector<scalar_t> grammian(const std::vector<scalar_t> &X,
-                                                const size_t nrow,
-                                                const bool intercept = false) {
-  const size_t ncol = (X.size() / nrow) + intercept;
-  std::vector<scalar_t> result(ncol * ncol, 0.0);
-  size_t p = 0;
-  if (intercept) {
-    // if we are using intercept, the first row is easy, and we only need to do
-    // ncol-1 additional operations, all of which amount to computing column
-    // sums
-    result[p++] = static_cast<scalar_t>(nrow);
-    for (size_t i = 0; i < ncol - 1; i++) {
-      scalar_t tmp = 0.0;
-      for (size_t j = 0; j < nrow; j++) {
-        tmp += X[i * nrow + j];
-      }
-      result[p++] = tmp;
-    }
-    // skip the first coefficient of second column; we already have this
-    p++;
-  }
-  // the actual grammian ignoring intercepts
-  for (size_t j = 0; j < ncol; j++) {
-    for (size_t i = j; i < nrow; i++) {
-      scalar_t tmp = 0.0;
-      for (size_t k = 0; k < nrow; k++) {
-        tmp += X[nrow * j + k] * X[nrow * i + k];
-      }
-      result[p++] = tmp;
-    }
-    // increment index - intercept is necessary here for correct offsetting
-    p += j + 1 + intercept;
-  }
-  // symmetrize result
-  for (size_t j = 1; j < ncol; j++) {
-    for (size_t i = 0; i < j; i++) {
-      result[j * ncol + i] = result[i * ncol + j];
-    }
-  }
-  return result;
 }
 }  // namespace tinyqr::internal
 namespace tinyqr {
@@ -354,44 +271,20 @@ struct QR {
   std::vector<scalar_t> Q;
   std::vector<scalar_t> R;
 };
-
 template <typename scalar_t>
 [[maybe_unused]] QR<scalar_t> qr_decomposition(const std::vector<scalar_t> &X,
                                                const size_t n, const size_t p,
                                                const scalar_t tol = 1e-8) {
   // initialize Q and R
   std::vector<scalar_t> Q = tinyqr::internal::make_identity<scalar_t>(n);
-  std::vector<scalar_t> R = X;
-  tinyqr::internal::qr_impl<scalar_t, true>(Q, R, n, p, tol);
-  // keep in mind that only an n*p block of Q is meaningful, as well as only a
-  // p*p block of R
-  tinyqr::internal::transpose_square(Q, n);
-  size_t k = 0;
-  for (size_t i = 0; i < p; i++) {
-    for (size_t j = 0; j < p; j++) {
-      R[k++] = R[i * n + j];
-    }
-  }
-
-  Q.resize(n * p);
-  R.resize(p * p);
-  return {Q, R};
-}
-
-template <typename scalar_t>
-[[maybe_unused]] QR<scalar_t> qr_decomposition2(const std::vector<scalar_t> &X,
-                                                const size_t n, const size_t p,
-                                                const scalar_t tol = 1e-8) {
-  // initialize Q and R
-  std::vector<scalar_t> Q = tinyqr::internal::make_identity<scalar_t>(n);
   // initialize R as transposed
-  std::vector<scalar_t> R(X.size(), 0.0);
+  std::vector<scalar_t> R(X.size(), static_cast<scalar_t>(0.0));
   for (size_t i = 0; i < n; i++) {
     for (size_t j = 0; j < p; j++) {
       R[i * p + j] = X[j * n + i];
     }
   }
-  tinyqr::internal::qr_impl2<scalar_t, true>(Q, R, n, p, tol);
+  tinyqr::internal::qr_impl<scalar_t, true>(Q, R, n, p, tol);
   // we do not actually need to manipulate more than pxp block of R
   tinyqr::internal::transpose_square(R, p);
   Q.resize(n * p);
@@ -429,26 +322,20 @@ template <typename scalar_t>
     }
     // call QR decomposition
     tinyqr::internal::qr_impl<scalar_t, false>(Q, R, n, n, tol);
-    // note QR decomposition returns Qt, not Q!!!
-    tinyqr::internal::A_matmul_tB_to_C<scalar_t>(R, Q, Ak, n);
+    // note QR decomposition returns Rt, not R!!!
+    tinyqr::internal::tA_matmul_B_to_C<scalar_t>(R, Q, Ak, n);
     // overwrite QQ in place
     size_t p = 0;
     for (size_t j = 0; j < n; j++) {
       for (size_t k = 0; k < n; k++) {
         temp[p] = 0;
         for (size_t l = 0; l < n; l++) {
-          // note that this is Qt
-          // there must be a way to vectorise this code, but it requires
-          // transposing both matrices from current state - it would be bloody
-          // convenient if qr_impl return Q, rather than Qt, and we should
-          // probably hold QQ in row major layout - that should not really pose
-          // difficulties since it is only an accumulator
-          temp[p] += QQ[l * n + k] * Q[l * n + j];
+          temp[p] += QQ[l * n + k] * Q[j * n + l];
         }
         p++;
       }
     }
-    // write to A colwise - i.e. directly
+    // write to A directly
     for (size_t k = 0; k < QQ.size(); k++) {
       QQ[k] = temp[k];
     }
@@ -462,12 +349,12 @@ template <typename scalar_t>
   return {Ak, QQ};
 }
 template <typename scalar_t>
-class QRSolver {
+class [[maybe_unused]] QRSolver {
   const size_t n;
   std::vector<scalar_t> Ak, QQ, Q, R, temp, eigval;
 
  public:
-  explicit QRSolver<scalar_t>(const size_t n) : n(n) {
+  [[maybe_unused]] explicit QRSolver<scalar_t>(const size_t n) : n(n) {
     this->Ak = std::vector<scalar_t>(n * n);
     this->QQ = std::vector<scalar_t>(n * n, 0.0);
     for (size_t i = 0; i < n; i++) this->QQ[i * n + i] = 1.0;
@@ -478,8 +365,9 @@ class QRSolver {
     this->temp = std::vector<scalar_t>(n * n);
     this->eigval = std::vector<scalar_t>(n);
   }
-  void solve(const std::vector<scalar_t> &A, const size_t max_iter = 25,
-             const scalar_t tol = 1e-8) {
+  [[maybe_unused]] void solve(const std::vector<scalar_t> &A,
+                              const size_t max_iter = 25,
+                              const scalar_t tol = 1e-8) {
     this->Ak = A;
     // in case we need to reset QQ
     for (size_t i = 0; i < n; i++) {
@@ -499,14 +387,14 @@ class QRSolver {
       // call QR decomposition
       tinyqr::internal::qr_impl<scalar_t, false>(Q, R, n, n, tol);
       // note QR decomposition returns Qt, not Q!!!
-      tinyqr::internal::A_matmul_tB_to_C<scalar_t>(R, Q, Ak, n);
+      tinyqr::internal::tA_matmul_B_to_C<scalar_t>(R, Q, Ak, n);
       // overwrite QQ in place
       size_t p = 0;
       for (size_t j = 0; j < n; j++) {
         for (size_t k = 0; k < n; k++) {
           temp[p] = 0;
           for (size_t l = 0; l < n; l++) {
-            temp[p] += QQ[l * n + k] * Q[l * n + j];
+            temp[p] += QQ[l * n + k] * Q[j * n + l];
           }
           p++;
         }
@@ -520,35 +408,24 @@ class QRSolver {
       eigval[i] = Ak[i * n + i];
     }
   }
-  const std::vector<scalar_t> &eigenvalues() const { return eigval; }
-  const std::vector<scalar_t> &eigenvectors() const { return this->QQ; }
-};
-
-// Function for back substitution
-template <typename scalar_t>
-[[maybe_unused]] std::vector<scalar_t> back_solve(
-    const std::vector<scalar_t> &R, const std::vector<scalar_t> &y) {
-  const size_t n = y.size();
-  std::vector<scalar_t> result(n, 0.0);
-  for (size_t i = n; i-- > 0;) {
-    scalar_t temp = 0.0;
-    for (size_t j = i + 1; j < n; ++j) {
-      temp += R[j * n + i] * result[j];
-    }
-    result[i] = (y[i] - temp) / R[i * n + i];
+  [[maybe_unused]] const std::vector<scalar_t> &eigenvalues() const {
+    return eigval;
   }
-  return result;
-}
+  [[maybe_unused]] const std::vector<scalar_t> &eigenvectors() const {
+    return this->QQ;
+  }
+};
 // Function for back substitution using QR decomposition result
-// this one is nicer since it saves us from computing an intermediary
+// this does not require any temporaries
 template <typename scalar_t>
-std::vector<scalar_t> back_solve(const std::vector<scalar_t> &Q,
-                                 const std::vector<scalar_t> &R,
-                                 const std::vector<scalar_t> &y,
+std::vector<scalar_t> back_solve(const std::vector<scalar_t> &__restrict__ Q,
+                                 const std::vector<scalar_t> &__restrict__ R,
+                                 const std::vector<scalar_t> &__restrict__ y,
                                  const size_t nrow, const size_t ncol) {
   std::vector<scalar_t> result(ncol, 0.0);
   for (size_t i = ncol; i-- > 0;) {
     scalar_t temp = 0.0;
+    // this might benefit from transposes
     for (size_t j = i + 1; j < ncol; ++j) {
       temp += R[j * ncol + i] * result[j];
     }
@@ -564,9 +441,9 @@ std::vector<scalar_t> back_solve(const std::vector<scalar_t> &Q,
   return result;
 }
 template <typename scalar_t>
-[[maybe_unused]] std::vector<scalar_t> lm(const std::vector<scalar_t> &X,
-                                          const std::vector<scalar_t> &y,
-                                          const scalar_t tol = 1e-12) {
+[[maybe_unused]] std::vector<scalar_t> lm(
+    const std::vector<scalar_t> &__restrict__ X,
+    const std::vector<scalar_t> &__restrict__ y, const scalar_t tol = 1e-12) {
   const size_t nrow = y.size();
   const size_t ncol = X.size() / nrow;
   // compute QR decomposition

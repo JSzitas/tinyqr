@@ -33,7 +33,16 @@ int main() {
                                  0.09, 6.74, 2.94, 45.46};
 
   using scalar_t = double;
-  auto benchmark = Benchmarker<scalar_t>(100);
+  auto benchmark = Benchmarker<scalar_t>(1000);
+  /*
+    size_t i = 10, j = 1000;
+    auto X = make_random_matrix<scalar_t>(j, i);
+    std::function<void()> v1 = [&]() { tinyqr::qr_decomposition(X, j, i); };
+    std::function<void()> v2 = [&]() { tinyqr::qr_decomposition2(X, j, i); };
+    std::cout << "n: " << j << " | p: " << i << std::endl;
+    benchmark_versions(v1,v2);
+    */
+
   for (size_t i = 2; i < 128; i *= 2) {
     for (size_t j = i; j < 2048; j *= 2) {
       auto X = make_random_matrix<scalar_t>(j, i);
@@ -43,6 +52,7 @@ int main() {
       benchmark(v1, v2);
     }
   }
+
   benchmark.report();
   return 0;
 }

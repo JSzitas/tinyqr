@@ -27,7 +27,8 @@
 #include "./tinyqr.h"
 
 template <typename T>
-void print_eigendecomposition_result(T &result, const size_t n = 4) {
+[[maybe_unused]] void print_eigendecomposition_result(T &result,
+                                                      const size_t n = 4) {
   std::cout << "Eigenvals: \n";
   for (auto &eigval : result.eigenvals) {
     std::cout << eigval << ",";
@@ -42,13 +43,14 @@ void print_eigendecomposition_result(T &result, const size_t n = 4) {
   }
   std::cout << std::endl;
 }
-void print_vec(const std::vector<double> &x) {
+[[maybe_unused]] void print_vec(const std::vector<double> &x) {
   for (const auto &val : x) {
     std::cout << val << ",";
   }
   std::cout << "\n";
 }
-void print_square_mat(const std::vector<double> &x, const size_t n = 4) {
+[[maybe_unused]] void print_square_mat(const std::vector<double> &x,
+                                       const size_t n = 4) {
   std::cout << "\n";
   for (size_t i = 0; i < n; i++) {
     for (size_t j = 0; j < n; j++) {
@@ -87,47 +89,15 @@ int main() {
   const std::vector<double> A = {2.68, 8.86, 2.78, 0.09, 8.86, 50.93,
                                  3.78, 6.74, 2.78, 3.78, 8.95, 2.94,
                                  0.09, 6.74, 2.94, 45.46};
-  auto test = [&](const size_t n, const size_t p, const int version = 1) {
-    tinyqr::QR<double> QR_res;
-    if (version == 1) {
-      std::cout << "Running version 1\n";
-      QR_res = tinyqr::qr_decomposition(A, n, p);
-    } else {
-      std::cout << "Running version 2\n";
-      QR_res = tinyqr::qr_decomposition2(A, n, p);
-    }
+  auto test = [&](const size_t n, const size_t p) {
+    tinyqr::QR<double> QR_res = tinyqr::qr_decomposition(A, n, p);
     print_QR_decomposition(QR_res, n, p);
     tinyqr::internal::validate_qr(A, QR_res.Q, QR_res.R, n, p);
   };
-  test(4, 4, 1);
-  test(4, 4, 2);
-  test(8, 2, 1);
-  test(8, 2, 2);
-  /*
-  // only QR decomposition, as opposed to QR algorithm
-  const auto QR_res = tinyqr::qr_decomposition(A, 4, 4);
-  print_QR_decomposition(QR_res, 4, 4);
-  const auto pass = tinyqr::internal::validate_qr(A, QR_res.Q, QR_res.R, 4, 4);
-  if(!pass)
-    std::cout << "Failed to recreate input from QR matrices\n";
-  const auto QR_res2 = tinyqr::qr_decomposition2(A, 4, 4);
-  print_QR_decomposition(QR_res2, 4, 4);
-  const auto pass2 = tinyqr::internal::validate_qr(A, QR_res2.Q, QR_res2.R, 4,
-  4); if(!pass2) std::cout << "Failed to recreate input from QR matrices\n";
-    */
-  /*
-  // check that we can recover A as QR
-  const auto QR_res21 = tinyqr::qr_decomposition(A, 8, 2);
-  print_QR_decomposition(QR_res21, 8, 2);
-   const auto pass = tinyqr::internal::validate_qr(A, QR_res21.Q, QR_res21.R, 8,
-2); if(!pass) std::cout << "Failed to recreate input from QR matrices\n"; const
-auto QR_res2 = tinyqr::qr_decomposition2(A, 4, 4);
-print_QR_decomposition(QR_res2, 4, 4);
-const auto pass2 = tinyqr::internal::validate_qr(A, QR_res2.Q, QR_res2.R, 4, 4);
-if(!pass2)
-std::cout << "Failed to recreate input from QR matrices\n";
-
-
+  test(4, 4);
+  test(4, 4);
+  test(8, 2);
+  test(8, 2);
   // solving a linear system using QR
   std::vector<double> y = {-0.18, 0.56,  -9.7,  -3.21,
                            3.78,  16.94, -1.37, -51.32};
@@ -137,8 +107,6 @@ std::cout << "Failed to recreate input from QR matrices\n";
   std::cout << "Linear system solution coefficients: ";
   for (auto coef_ : coef) std::cout << coef_ << ",";
   std::cout << "\n(against expectation of 0.4938, -1.1994)\n\n";
-  // should be correct until here, then power iteration is probably
-  // broken
   // QR Algorithm
   const auto res = tinyqr::qr_algorithm<double>(A, 25);
   print_eigendecomposition_result(res);
@@ -149,6 +117,5 @@ std::cout << "Failed to recreate input from QR matrices\n";
   print_vec(solver.eigenvalues());
   std::cout << "Eigenvecs:";
   print_square_mat(solver.eigenvectors());
-   */
   return 0;
 }

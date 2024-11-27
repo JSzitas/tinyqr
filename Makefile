@@ -15,5 +15,10 @@ quick_noarch:
 	clang++ -std=c++17 -O3 -Wall quick.cpp -o quick;
 	./quick;
 	rm quick;
+
+lm_test:
+	clang++ -std=c++17 -O3 -Wall benchmarking/test_lm.cpp -o quick;
+	./quick;
+	rm quick;
 clean:
 	rm -rf example quick prof

@@ -122,8 +122,6 @@ inline INLINE_THIS void transpose_square(std::vector<scalar_t> &X,
     }
   }
 }
-// TODO(JSzitas): All of the following code supports SIMD
-// and this impl should make it a lot easier
 template <typename scalar_t>
 inline INLINE_THIS void rotate_matrix(scalar_t *RESTRICT_THIS lower,
                                       scalar_t *RESTRICT_THIS upper,
@@ -258,12 +256,6 @@ void qr_impl(std::vector<scalar_t> &RESTRICT_THIS Q,
   // place to optimize
   for (size_t j = 0; j < p; j++) {
     for (size_t i = n - 1; i > j; --i) {
-      // using tuples and structured bindings should make this fairly ok
-      // performance wise
-      // check if R[j * n + i] - is not zero; if it is we can skip this
-      // iteration
-      // if (std::abs(R[i * p + j]) <= std::numeric_limits<scalar_t>::min())
-      // continue;
       const auto [c, s] = givens_rotation(R[(i - 1) * p + j], R[i * p + j]);
       // you can make the matrix multiplication implicit, as the givens rotation
       // only impacts a moving 2x2 block

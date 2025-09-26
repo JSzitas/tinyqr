@@ -115,7 +115,7 @@ struct StreamingMedian {
     }
   }
 };
-
+/*
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "UnusedParameter"
 template <typename scalar_t, typename F>
@@ -208,7 +208,7 @@ void benchmark_versions(Ts&&... versions) {
     benchmark<scalar_t>(fun, max_iterations);
   }
 }
-
+*/
 template <typename scalar_t>
 std::vector<scalar_t> make_random_matrix(const size_t n, const size_t p,
                                          const scalar_t mean = 0.0,

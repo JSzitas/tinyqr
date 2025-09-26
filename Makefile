@@ -2,7 +2,7 @@ example:
 	clang++ -std=c++17 -O0 -g -Wall main.cpp -o example;
 	./example;
 prof:
-	clang++ -std=c++17 -O0 -pg -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -Wall main.cpp -o prof
+	clang++ -std=c++17 -O0 -pg -ggdb -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -Wall benchmarking/profile_lm.cpp -o prof
 quick:
 	clang++ -std=c++17 -O3 -march=native -Wall quick.cpp -o quick;
 	./quick;

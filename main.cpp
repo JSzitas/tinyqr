@@ -23,6 +23,7 @@
 // SOFTWARE.
 
 #include <iostream>
+#include <vector>
 
 #include "./tinyqr.h"
 
@@ -89,15 +90,15 @@ int main() {
   const std::vector<double> A = {2.68, 8.86, 2.78, 0.09, 8.86, 50.93,
                                  3.78, 6.74, 2.78, 3.78, 8.95, 2.94,
                                  0.09, 6.74, 2.94, 45.46};
-  auto test = [&](const size_t n, const size_t p) {
-    tinyqr::QR<double> QR_res = tinyqr::qr_decomposition(A, n, p);
+  auto test = [&](const std::vector<double> &X, const size_t n,
+                  const size_t p) {
+    tinyqr::QR<double> QR_res = tinyqr::qr_decomposition(X.data(), n, p);
     print_QR_decomposition(QR_res, n, p);
-    tinyqr::internal::validate_qr(A, QR_res.Q, QR_res.R, n, p);
+    tinyqr::internal::validate_qr(X, QR_res.Q, QR_res.R, n, p);
   };
-  test(4, 4);
-  test(4, 4);
-  test(8, 2);
-  test(8, 2);
+  test(A, 4, 4);
+  test(A, 8, 2);
+
   // solving a linear system using QR
   std::vector<double> y = {-0.18, 0.56,  -9.7,  -3.21,
                            3.78,  16.94, -1.37, -51.32};

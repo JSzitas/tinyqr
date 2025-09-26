@@ -22,34 +22,28 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include <benchmark/benchmark.h>
-
 #include <iostream>
 
 #include "../tinyqr.h"
 #include "./utils.h"
 
-// The benchmark function
-static void BM_MyFunction(benchmark::State& state) {
-  // Setup: prepare data
+int main() {
   using scalar_t = float;
-  const auto A = read_vec<scalar_t>("../benchmarking/A2.txt");
-  const auto y = read_vec<scalar_t>("../benchmarking/y2.txt");
-  auto myFunction = [&]() {
+  const auto A =
+      read_vec<scalar_t>("/home/jsco/Desktop/tinyqr/benchmarking/A2.txt");
+  const auto y =
+      read_vec<scalar_t>("/home/jsco/Desktop/tinyqr/benchmarking/y2.txt");
+  scalar_t counter = 0.;
+  auto lam = [&]() {
     auto coef = tinyqr::lm(A, y);
+    // to prevent optimization we manipulate this counter and then print it
+    counter += coef[0];
     return;
   };
-  // Run: measure performance in a loop
-  for (auto _ : state) {
-    benchmark::DoNotOptimize(A.data());
-    benchmark::DoNotOptimize(y.data());
-    myFunction();
-    benchmark::ClobberMemory();
+  for (size_t i = 0; i < 100; i++) {
+    lam();
+    counter += static_cast<scalar_t>(i);
   }
+  std::cout << counter << std::endl;
+  return 0;
 }
-
-// Register the function as a benchmark and specify a range for the argument
-BENCHMARK(BM_MyFunction);
-
-// Provide main() for Google Benchmark
-BENCHMARK_MAIN();

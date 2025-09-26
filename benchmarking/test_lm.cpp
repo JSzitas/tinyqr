@@ -29,8 +29,8 @@
 
 int main() {
   using scalar_t = float;
-  const auto A = read_vec<scalar_t>("benchmarking/A2.txt");
-  const auto y = read_vec<scalar_t>("benchmarking/y2.txt");
+  const auto A = read_vec<scalar_t>("A2.txt");
+  const auto y = read_vec<scalar_t>("y2.txt");
 
   auto coef = tinyqr::lm(A, y);
   std::cout << "Coefficients from runtime tinyqr::lm: \n";

@@ -25,11 +25,14 @@
 #ifndef BENCHMARKING_UTILS_H_
 #define BENCHMARKING_UTILS_H_
 
+#include <algorithm>
 #include <chrono>  // NOLINT [build/c++11]
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <queue>
 #include <random>
 #include <string>
@@ -115,7 +118,7 @@ struct StreamingMedian {
     }
   }
 };
-/*
+namespace custom_bench {
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "UnusedParameter"
 template <typename scalar_t, typename F>
@@ -126,14 +129,19 @@ void benchmark(F& fun, const size_t max_iterations = 1000) {
     return sw();
   };
   scalar_t timing = 0.0;
+  scalar_t min_ = std::numeric_limits<scalar_t>::max(),
+           max_ = std::numeric_limits<scalar_t>::min();
   StreamingMedian<scalar_t> median;
   for (size_t i = 0; i < max_iterations; i++) {
     const scalar_t run = fun_();
+    min_ = std::min(min_, run);
+    max_ = std::max(max_, run);
     timing += run;
     median.push_back(run);
   }
   std::cout << "Average time: " << timing / max_iterations
             << " \u03BCs | Median: " << median.value()
+            << " \u03BCs | Min: " << min_ << " \u03BCs | Max: " << max_
             << " \u03BCs | Total time: " << timing << " \u03BCs" << std::endl;
 }
 
@@ -208,7 +216,7 @@ void benchmark_versions(Ts&&... versions) {
     benchmark<scalar_t>(fun, max_iterations);
   }
 }
-*/
+};  // namespace custom_bench
 template <typename scalar_t>
 std::vector<scalar_t> make_random_matrix(const size_t n, const size_t p,
                                          const scalar_t mean = 0.0,
@@ -219,6 +227,38 @@ std::vector<scalar_t> make_random_matrix(const size_t n, const size_t p,
 
   std::vector<scalar_t> result(n * p);
   for (auto& val : result) val = d(gen);
+  return result;
+}
+
+template <typename scalar_t>
+std::vector<scalar_t> make_random_coefs(const size_t p,
+                                        const scalar_t mean = 0.0,
+                                        const scalar_t std_dev = 1.0) {
+  std::random_device rd{};
+  std::mt19937 gen{rd()};
+  std::normal_distribution d{mean, std_dev};
+
+  std::vector<scalar_t> result(p);
+  for (auto& val : result) val = d(gen);
+  return result;
+}
+
+template <typename scalar_t>
+std::vector<scalar_t> make_y(const std::vector<scalar_t>& X,
+                             const std::vector<scalar_t>& coefs, const size_t n,
+                             const size_t p, const scalar_t mean = 0.0,
+                             const scalar_t std_dev = 0.5) {
+  std::random_device rd{};
+  std::mt19937 gen{rd()};
+  std::normal_distribution d{mean, std_dev};
+
+  std::vector<scalar_t> result(n, 0.);
+  for (size_t j = 0; j < p; j++) {
+    const auto coef_ = coefs[p];
+    for (size_t i = 0; i < n; i++) {
+      result[i] += (X[j * n + i] * coef_) + d(gen);
+    }
+  }
   return result;
 }
 

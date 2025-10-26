@@ -29,6 +29,7 @@
 #include "../tinyqr.h"
 #include "./utils.h"
 
+/*
 // The benchmark function
 static void BM_MyFunction(benchmark::State& state) {
   // Setup: prepare data
@@ -53,3 +54,29 @@ BENCHMARK(BM_MyFunction);
 
 // Provide main() for Google Benchmark
 BENCHMARK_MAIN();
+*/
+
+int main() {
+  using scalar_t = float;
+  /*const auto A = read_vec<scalar_t>("../benchmarking/A2.txt");
+  const auto y = read_vec<scalar_t>("../benchmarking/y2.txt");
+  auto f_lam = [&]() {
+    auto coef = tinyqr::lm(A, y);
+    return;
+  };*/
+
+  for (size_t i = 2; i < 512; i *= 2) {
+    for (size_t j = (2 * i); j < 4096; j *= 2) {
+      auto X = make_random_matrix<scalar_t>(j, i);
+      const auto coefs = make_random_coefs<scalar_t>(i);
+      auto y = make_y(X, coefs, j, i);
+      auto f_lam = [&]() {
+        auto coef = tinyqr::lm(X, y, static_cast<scalar_t>(10.));
+        return;
+      };
+      std::cout << "n: " << j << " | p: " << i << " | ";
+      custom_bench::benchmark<scalar_t>(f_lam, 100);
+    }
+  }
+  return 0;
+}

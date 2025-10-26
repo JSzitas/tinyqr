@@ -25,13 +25,11 @@
 #ifndef TINYQR_H_
 #define TINYQR_H_
 
-#include <stdlib.h>
-
 #include <array>
 #include <cmath>
 #include <iostream>
 #include <limits>
-#include <tuple>
+#include <optional>
 #include <utility>
 #include <vector>
 // inlining
@@ -74,6 +72,18 @@
 namespace tinyqr {
 namespace internal {
 
+inline void print_rec_mat(const double *x, const size_t n = 4,
+                          const size_t p = 4) {
+  std::cout << "\n";
+  for (size_t i = 0; i < n; i++) {
+    for (size_t j = 0; j < p; j++) {
+      std::cout << *(x + j * n + i) << ',';
+    }
+    std::cout << '\n';
+  }
+  std::cout << std::endl;
+}
+
 // the dumbest way to use an arena; all things allocated once at the start
 template <typename scalar_t>
 struct arena {
@@ -83,6 +93,7 @@ struct arena {
     storage = static_cast<scalar_t *>(calloc(n_entries, sizeof(scalar_t)));
   }
   scalar_t *operator()() { return storage; }
+  scalar_t *operator+(const size_t offset) { return storage + offset; }
   ~arena() { free(storage); }
 };
 
@@ -346,19 +357,23 @@ void qr_impl(scalar_t *RESTRICT_THIS Q_data, scalar_t *RESTRICT_THIS R_data,
 }
 // Function for back substitution using QR decomposition result
 // this does not require any temporaries
-template <typename scalar_t>
+template <const bool is_ridge = false, typename scalar_t>
 std::vector<scalar_t> back_solve(const scalar_t *RESTRICT_THIS Q,
                                  const scalar_t *RESTRICT_THIS R,
                                  const scalar_t *RESTRICT_THIS y,
                                  const size_t nrow, const size_t ncol) {
   // possibly replacing this with something else is actually not more efficient
   std::vector<scalar_t> result(ncol, 0.0);
+  // offsetting in Q controlled this way
+  const size_t Q_size = nrow + (is_ridge * ncol);
   for (size_t i = ncol; i-- > 0;) {
     scalar_t temp = 0.0;
     // this is actually the product with R' since that has a much nicer
     // access pattern
+    // TODO(JSzitas): Technically permits FMA
+    const scalar_t *view_r = R + (i * ncol);
     for (size_t j = i + 1; j < ncol; ++j) {
-      temp += *(R + (i * ncol + j)) * result[j];
+      temp += *(view_r + j) * result[j];
     }
     // do a multiplication by -1;
     // the result is that you save on a temporary since the next computation
@@ -366,11 +381,13 @@ std::vector<scalar_t> back_solve(const scalar_t *RESTRICT_THIS Q,
     // above by subtractions is faster, but I assume adds/mults are a bit
     // cheaper than subtractions
     temp *= -1.;
+    const scalar_t *view_q = Q + (i * Q_size);
+    // TODO(JSzitas): Technically permits FMA
     for (size_t j = 0; j < nrow; ++j) {
       // product Q'y need not be computed ahead of time; we can lazily compute
       // coefficient by coefficient, requiring only one temporary
       // stack-allocated variable
-      temp += *(Q + (i * nrow + j)) * *(y + j);
+      temp += *(view_q + j) * *(y + j);
     }
     result[i] = temp / *(R + (i * ncol + i));
   }
@@ -401,7 +418,7 @@ constexpr T csqrt(T x, T curr = 1.0, T prev = 0.0) {
 }
 template <typename T>
 constexpr T cinv_sqrt(T x, T curr = 1.0, T prev = 0.0) {
-  return 1 / csqrt(x, curr, prev);
+  return 1. / csqrt(x, curr, prev);
 }
 template <typename T>
 constexpr void cswap(T &a, T &b) {
@@ -410,8 +427,8 @@ constexpr void cswap(T &a, T &b) {
   b = temp;
 }
 template <typename scalar_t>
-constexpr std::tuple<scalar_t, scalar_t> cgivens_rotation(const scalar_t a,
-                                                          const scalar_t b) {
+constexpr std::pair<scalar_t, scalar_t> cgivens_rotation(const scalar_t a,
+                                                         const scalar_t b) {
   if (cabs(b) > cabs(a)) {
     const scalar_t r = a / b;
     const auto s = static_cast<scalar_t>(cinv_sqrt(cpow(r, 2) + 1.0));
@@ -454,19 +471,25 @@ constexpr void cqr_impl(std::array<scalar_t, n * n> &Q,
   // the key to optimizing this is probably to take R as R transposed - most
   // likely a lot of work is done just in the k loops, which is probably a good
   // place to optimize
+  constexpr auto min_ = std::numeric_limits<scalar_t>::min();
   for (size_t j = 0; j < p; j++) {
     for (size_t i = n - 1; i > j; --i) {
+      const auto i_p = i * p;
+      const auto i_p_1 = i_p - p;
+      // no rotation
+      if (std::abs(R[i_p + j]) <= min_) continue;
       // using tuples and structured bindings should make this fairly ok
       // performance wise
       // check if R[j * n + i] - is not zero; otherwise we can skip this
       // iteration
       // if (std::abs(R[i * p + j]) <= std::numeric_limits<scalar_t>::min())
       // continue;
-      const auto [c, s] = cgivens_rotation(R[(i - 1) * p + j], R[i * p + j]);
+      const auto [c, s] = cgivens_rotation(R[i_p_1 + j], R[i_p + j]);
       // you can make the matrix multiplication implicit, as the given's
       // rotation only impacts a moving 2x2 block R is transposed
-      crotate_matrix(R.data() + (i - 1) * p, R.data() + i * p, c, s, p);
-      crotate_matrix(Q.data() + (i - 1) * n, Q.data() + i * n, c, s, n);
+      const auto i_n = i * n;
+      crotate_matrix(R.data() + i_p_1, R.data() + i_p, c, s, p);
+      crotate_matrix(Q.data() + i_n - n, Q.data() + i_n, c, s, n);
     }
   }
   // clean up R - particularly under the diagonal - only useful if you are
@@ -505,29 +528,52 @@ struct QR {
   std::vector<scalar_t> Q;
   std::vector<scalar_t> R;
 };
-template <typename scalar_t, const bool transposed_r = false>
+template <const bool is_ridge = false, typename scalar_t>
 [[maybe_unused]] void qr_decomposition(
     const scalar_t *X, tinyqr::internal::arena<scalar_t> &memory,
-    const size_t n, const size_t p, const scalar_t tol = 1e-8) {
+    const size_t n, const size_t p, scalar_t ridge_lambda = 0.,
+    const scalar_t tol = 1e-8) {
   scalar_t *storage_arena = memory();
-  // initialize Q and R
-  internal::make_identity<scalar_t>(storage_arena, n);
-  // initialize R as transposed
-  // std::vector<scalar_t> R(n*p, static_cast<scalar_t>(0.0));
-  size_t Q_offset = n * n;
-  for (size_t i = 0; i < n; i++) {
-    for (size_t j = 0; j < p; j++) {
-      *(storage_arena + Q_offset + (i * p) + j) = *(X + (j * n) + i);
+  size_t Q_offset, n_, p_;
+  if constexpr (is_ridge) {
+    n_ = n + p;
+    p_ = p;
+    Q_offset = n_ * n_;
+    // initialize Q and R
+    internal::make_identity<scalar_t>(storage_arena, n_);
+    // initialize R as transposed
+    for (size_t i = 0; i < n; i++) {
+      for (size_t j = 0; j < p; j++) {
+        *(storage_arena + Q_offset + (i * p) + j) = *(X + (j * n) + i);
+      }
+    }
+    for (size_t i = n; i < n_; i++) {
+      for (size_t j = 0; j < p; j++) {
+        *(storage_arena + Q_offset + ((n + j) * p) + j) = ridge_lambda;
+      }
+    }
+
+  } else {
+    n_ = n;
+    p_ = p;
+    // initialize Q and R
+    internal::make_identity<scalar_t>(storage_arena, n);
+    // initialize R as transposed
+    Q_offset = n * n;
+    for (size_t i = 0; i < n; i++) {
+      for (size_t j = 0; j < p; j++) {
+        *(storage_arena + Q_offset + (i * p) + j) = *(X + (j * n) + i);
+      }
     }
   }
   // technically returns transposed Q and transposed R; both should have
   // better cache locality in lm
-  internal::qr_impl<scalar_t, true>(storage_arena, storage_arena + Q_offset, n,
-                                    p, tol);
+  internal::qr_impl<scalar_t, true>(storage_arena, storage_arena + Q_offset, n_,
+                                    p_, tol);
 }
-// this gets called by users, not by the implementation; thus is actually
+// this gets called by users, not by the implementation; thus it actually
 // returns
-template <typename scalar_t, const bool transposed_r = false>
+template <typename scalar_t>
 [[maybe_unused]] QR<scalar_t> qr_decomposition(const scalar_t *X,
                                                const size_t n, const size_t p,
                                                const scalar_t tol = 1e-8) {
@@ -594,6 +640,7 @@ template <typename scalar_t>
       for (size_t k = 0; k < n; k++) {
         temp[p] = 0;
         for (size_t l = 0; l < n; l++) {
+          // TODO(JSzitas): if QQ is transposed elsewhere we can do FMA here
           temp[p] += QQ[l * n + k] * Q[j * n + l];
         }
         p++;
@@ -619,6 +666,7 @@ class [[maybe_unused]] QRSolver {
 
  public:
   [[maybe_unused]] explicit QRSolver<scalar_t>(const size_t n) : n(n) {
+    // TODO(JSzitas): replace with arena
     this->Ak = std::vector<scalar_t>(n * n);
     this->QQ = std::vector<scalar_t>(n * n, 0.0);
     for (size_t i = 0; i < n; i++) this->QQ[i * n + i] = 1.0;
@@ -683,36 +731,41 @@ class [[maybe_unused]] QRSolver {
 };
 template <typename scalar_t>
 [[maybe_unused]] std::vector<scalar_t> lm(
+    const scalar_t *RESTRICT_THIS X, const scalar_t *RESTRICT_THIS y,
+    const size_t nrow, const size_t ncol,
+    const scalar_t ridge_lambda = std::numeric_limits<scalar_t>::min(),
+    const scalar_t tol = 1e-7) {
+  // lives until this function goes out of scope; don't need to manage lifetime
+  // include ridge?
+  const bool is_ridge =
+      ridge_lambda > 10e7 * std::numeric_limits<scalar_t>::min();
+  // allocates auxiliary memory for Q and R
+  const size_t Q_offset =
+      is_ridge ? (nrow + ncol) * (nrow + ncol) : nrow * nrow;
+  size_t mem_size =
+      is_ridge ? Q_offset + ((nrow * ncol) + (ncol * ncol))
+               :                      // Q + R (by brackets)
+          nrow * nrow + nrow * ncol;  // or both, without the ridge penalty
+  internal::arena<scalar_t> arena(mem_size);
+  is_ridge ? qr_decomposition<true>(X, arena, nrow, ncol, ridge_lambda, tol)
+           : qr_decomposition<false>(X, arena, nrow, ncol, ridge_lambda, tol);
+  // does this actually just work for ridge?
+  // solve R'x = Q'y - actually still using the transposed R
+  return is_ridge ? internal::back_solve<true>(arena(), (arena + Q_offset), y,
+                                               nrow, ncol)
+                  : internal::back_solve<false>(arena(), (arena + Q_offset), y,
+                                                nrow, ncol);
+}
+template <typename scalar_t>
+[[maybe_unused]] std::vector<scalar_t> lm(
     const std::vector<scalar_t> &RESTRICT_THIS X,
-    const std::vector<scalar_t> &RESTRICT_THIS y, const scalar_t tol = 1e-7) {
+    const std::vector<scalar_t> &RESTRICT_THIS y,
+    scalar_t ridge_lambda = std::numeric_limits<scalar_t>::min(),
+    const scalar_t tol = 1e-7) {
   const size_t nrow = y.size();
   const size_t ncol = X.size() / nrow;
-  // allocates auxiliary memory for Q and R
-  const size_t Q_offset = nrow * nrow;
-  internal::arena<scalar_t> arena(Q_offset + nrow * ncol);
-  // compute QR decomposition
-  qr_decomposition(X.data(), arena, nrow, ncol, tol);
-  scalar_t *storage = arena();
-  // solve R'x = Q'y - actually still using the transposed R
-  return internal::back_solve(storage, storage + Q_offset, y.data(), nrow,
-                              ncol);
+  return lm(X.data(), y.data(), nrow, ncol, ridge_lambda, tol);
 }
-// TODO(JSzitas): nearly identical to above, probably makes sense to merge
-template <typename scalar_t>
-[[maybe_unused]] std::vector<scalar_t> lm(const scalar_t *RESTRICT_THIS X,
-                                          const scalar_t *RESTRICT_THIS y,
-                                          const size_t nrow, const size_t ncol,
-                                          const scalar_t tol = 1e-7) {
-  // allocates auxiliary memory for Q and R
-  const size_t Q_offset = nrow * nrow;
-  // lives until this function goes out of scope; don't need to manage lifetime
-  internal::arena<scalar_t> arena(nrow * nrow + nrow * ncol);
-  // compute QR decomposition
-  qr_decomposition(X, arena, nrow, ncol, tol);
-  // solve R'x = Q'y - actually still using the transposed R
-  return internal::back_solve(arena, arena + Q_offset, y, nrow, ncol);
-}
-
 template <typename scalar_t, const size_t n, const size_t p>
 struct cQR {
   std::array<scalar_t, n * p> Q;
